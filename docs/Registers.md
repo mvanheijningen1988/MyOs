@@ -39,6 +39,48 @@ This document provides a comprehensive breakdown of x86 and x86-64 registers, in
 | **GS**       | 16-bit   | General-purpose segment register.                                           |
 | **SS**       | 16-bit   | Stack segment. Points to the segment containing the stack.                  |
 
+### Address Calculations with Segment Registers
+
+In x86 architecture, segment registers are used to calculate physical addresses from logical addresses. The calculation method depends on the CPU mode:
+
+#### Real Mode (16-bit)
+In real mode, physical addresses are calculated using the formula:
+```
+Physical Address = (Segment Register × 16) + Offset
+```
+
+**Example:**
+- If `DS = 0x1000` and offset = `0x0050`
+- Physical Address = `(0x1000 × 16) + 0x0050 = 0x10000 + 0x0050 = 0x10050`
+
+#### Protected Mode (32-bit)
+In protected mode, segment registers contain **selectors** that point to entries in descriptor tables:
+```
+Physical Address = Base Address (from descriptor) + Offset
+```
+
+**Selector Format (16-bit):**
+```
+Bits 15-3: Index into descriptor table
+Bit 2:     Table Indicator (0 = GDT, 1 = LDT)
+Bits 1-0:  Requested Privilege Level (RPL)
+```
+
+#### Long Mode (64-bit)
+In 64-bit mode, segmentation is mostly disabled:
+- `CS`, `DS`, `ES`, `SS` are treated as having base = 0 and limit = 0xFFFFFFFF
+- `FS` and `GS` can still have non-zero base addresses for special purposes
+- Linear address = effective address (no segment offset added)
+
+#### Common Segment:Offset Notation
+When writing assembly code, addresses are often written as `segment:offset`:
+- `0x1000:0x0050` represents segment 0x1000, offset 0x0050
+- In real mode: physical address = `0x10050`
+- `CS:IP` points to the current instruction
+- `SS:SP` points to the top of the stack
+- `DS:SI` commonly used for source data
+- `ES:DI` commonly used for destination data
+
 ---
 
 ## Control Registers (64-bit Mode Only)
