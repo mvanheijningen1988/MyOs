@@ -71,6 +71,249 @@ Bits 56-63:   Base Address (bits 24-31)
 - Access: 0xF2 (Present, Ring 3, Data, Read/Write)
 - Flags: 0xC (Granularity 4KB, 32-bit)
 
+## CPU Ring Architecture and Segment Correlation
+
+The x86 CPU implements a hierarchical protection mechanism using **privilege rings** (also called protection rings). The GDT segments are the primary mechanism for enforcing these privilege levels.
+
+### The Four Privilege Rings
+
+```
+┌─────────────────────────────────────────┐
+│         Ring 0 (Kernel Mode)            │  ← Highest Privilege
+│  - Operating System Kernel              │
+│  - Direct hardware access               │
+│  - Full memory access                   │
+│  - Can execute privileged instructions  │
+├─────────────────────────────────────────┤
+│         Ring 1 (Device Drivers)         │
+│  - Rarely used in modern OSes           │
+│  - Originally for device drivers        │
+├─────────────────────────────────────────┤
+│         Ring 2 (Device Drivers)         │
+│  - Rarely used in modern OSes           │
+│  - Originally for device drivers        │
+├─────────────────────────────────────────┤
+│         Ring 3 (User Mode)              │  ← Lowest Privilege
+│  - User applications                    │
+│  - No direct hardware access            │
+│  - Limited memory access                │
+│  - Cannot execute privileged instr.     │
+└─────────────────────────────────────────┘
+```
+
+**Note:** Most modern operating systems (Linux, Windows, macOS) only use Ring 0 (kernel) and Ring 3 (user), leaving Rings 1 and 2 unused.
+
+### How Segments Enforce Ring Protection
+
+The GDT segments work together with the CPU's protection mechanism through three key privilege levels:
+
+#### 1. **DPL (Descriptor Privilege Level)**
+- Stored in the segment descriptor's Access Byte (bits 5-6)
+- Defines the privilege level **required** to access this segment
+- Set at segment creation time in the GDT
+
+#### 2. **CPL (Current Privilege Level)**
+- Stored in the CS (Code Segment) register's lower 2 bits
+- Indicates the privilege level of the **currently executing code**
+- Changes when switching between kernel and user mode
+
+#### 3. **RPL (Requested Privilege Level)**
+- Stored in segment selector's lower 2 bits (bits 0-1)
+- Used for additional privilege checking
+- Can be used to voluntarily reduce privilege
+
+### Privilege Check Formula
+
+When accessing a segment, the CPU checks:
+```
+MAX(CPL, RPL) ≤ DPL  (for data segments)
+CPL ≤ DPL           (for non-conforming code segments)
+```
+
+If this check fails, the CPU generates a **General Protection Fault (GPF)**.
+
+### Segment Selector and Ring Correlation
+
+A segment selector is a 16-bit value that points to a GDT entry:
+
+```
+Bits 15-3: Index into GDT (which descriptor to use)
+Bit 2:     TI (Table Indicator) - 0=GDT, 1=LDT
+Bits 1-0:  RPL (Requested Privilege Level) - Ring 0-3
+```
+
+#### Examples:
+```assembly
+; Kernel mode segment selectors (Ring 0)
+0x08 = 0000000000001|0|00  ; Code segment, index 1, GDT, Ring 0
+0x10 = 0000000000010|0|00  ; Data segment, index 2, GDT, Ring 0
+
+; User mode segment selectors (Ring 3)
+0x1B = 0000000000011|0|11  ; Code segment, index 3, GDT, Ring 3
+0x23 = 0000000000100|0|11  ; Data segment, index 4, GDT, Ring 3
+```
+
+### How Segments Control Memory Access
+
+#### Ring 0 (Kernel) Access Pattern:
+```assembly
+; CPU is in Ring 0 (CPL = 0)
+mov ax, 0x10        ; Kernel data segment (DPL = 0)
+mov ds, ax          ; ALLOWED: CPL(0) ≤ DPL(0)
+mov eax, [0x1000]   ; Can access any memory
+```
+
+#### Ring 3 (User) Access Pattern:
+```assembly
+; CPU is in Ring 3 (CPL = 3)
+mov ax, 0x23        ; User data segment (DPL = 3)
+mov ds, ax          ; ALLOWED: CPL(3) ≤ DPL(3)
+
+mov ax, 0x10        ; Try to load kernel segment (DPL = 0)
+mov ds, ax          ; FAULT! CPL(3) > DPL(0) - General Protection Fault
+```
+
+### Segment Types and Ring Usage
+
+| Segment Type | Ring | DPL | Purpose | Code Can Execute | Data Access |
+|-------------|------|-----|---------|------------------|-------------|
+| Kernel Code | 0 | 0 | OS kernel | Privileged instructions | Full memory |
+| Kernel Data | 0 | 0 | Kernel data | N/A | Full memory |
+| User Code | 3 | 3 | Applications | Unprivileged only | Limited memory |
+| User Data | 3 | 3 | App data | N/A | User memory only |
+
+### Privilege Level Transitions
+
+#### User to Kernel (Ring 3 → Ring 0):
+Transitions **must** occur through specific controlled mechanisms:
+
+1. **Interrupts** (Hardware interrupts, exceptions)
+2. **System Calls** (INT 0x80, SYSCALL instruction)
+3. **Call Gates** (Special GDT entries)
+
+```assembly
+; User code (Ring 3)
+int 0x80            ; System call - CPU switches to Ring 0
+                    ; Loads kernel CS (Ring 0)
+                    ; Executes interrupt handler in Ring 0
+
+; Kernel interrupt handler (Ring 0)
+; ... handle system call ...
+iret                ; Return to Ring 3
+                    ; Restores user CS (Ring 3)
+```
+
+#### Kernel to User (Ring 0 → Ring 3):
+```assembly
+; Kernel code (Ring 0) transitioning to user mode
+push 0x23           ; User data segment selector (Ring 3)
+push user_stack     ; User stack pointer
+pushf               ; Push EFLAGS
+push 0x1B           ; User code segment selector (Ring 3)
+push user_entry     ; User code entry point
+iret                ; Interrupt return switches to Ring 3
+```
+
+### Real-World Example: System Call Flow
+
+```assembly
+;; User Application (Ring 3)
+user_code:
+    mov eax, 4          ; sys_write system call number
+    mov ebx, 1          ; stdout file descriptor
+    mov ecx, message    ; pointer to message
+    mov edx, 13         ; message length
+    int 0x80            ; Trigger system call
+                        ; CPU checks: CS.CPL=3, INT handler DPL≥0
+                        ; Switches to Ring 0 automatically
+                        ; Loads kernel CS and SS
+
+;; Kernel Interrupt Handler (Ring 0)
+system_call_handler:
+    ; Now in Ring 0 with full privileges
+    push ds
+    push es
+    mov ax, 0x10        ; Load kernel data segment (Ring 0)
+    mov ds, ax
+    mov es, ax
+    
+    ; Handle system call (can access all memory)
+    call [sys_call_table + eax*4]
+    
+    ; Restore user segments
+    pop es
+    pop ds
+    
+    ; Return to user mode
+    iret                ; CPU restores Ring 3 CS, SS
+                        ; Switches back to Ring 3
+
+;; Back in User Application (Ring 3)
+    ; System call complete, result in eax
+```
+
+### Why This Architecture Matters
+
+1. **Security**: User applications cannot directly access hardware or kernel memory
+2. **Stability**: Buggy user programs can't crash the kernel
+3. **Isolation**: Each process operates in its own protected space
+4. **Controlled Access**: Hardware access only through kernel-mediated system calls
+
+### Common Protection Violations
+
+```assembly
+; Example 1: User code tries to execute privileged instruction
+user_code:          ; Running in Ring 3
+    cli             ; FAULT! CLI requires Ring 0
+                    ; CPU generates General Protection Fault
+
+; Example 2: User code tries to access kernel segment
+user_code:          ; Running in Ring 3, CPL = 3
+    mov ax, 0x10    ; Kernel data segment, DPL = 0
+    mov ds, ax      ; FAULT! CPL(3) > DPL(0)
+                    ; CPU generates General Protection Fault
+
+; Example 3: Kernel accessing user segment (allowed)
+kernel_code:        ; Running in Ring 0, CPL = 0
+    mov ax, 0x23    ; User data segment, DPL = 3
+    mov ds, ax      ; OK! CPL(0) ≤ DPL(3)
+                    ; Kernel can access user memory
+```
+
+### GDT Design Best Practices for Ring Architecture
+
+```assembly
+; Typical GDT setup for modern OS
+gdt_start:
+    ; Entry 0: Null descriptor (required)
+    dq 0
+    
+    ; Entry 1 (0x08): Kernel code segment, Ring 0
+    ; DPL = 00b (Ring 0)
+    dw 0xFFFF, 0x0000
+    db 0x00, 0x9A, 0xCF, 0x00
+    
+    ; Entry 2 (0x10): Kernel data segment, Ring 0
+    ; DPL = 00b (Ring 0)
+    dw 0xFFFF, 0x0000
+    db 0x00, 0x92, 0xCF, 0x00
+    
+    ; Entry 3 (0x18): User code segment, Ring 3
+    ; DPL = 11b (Ring 3)
+    dw 0xFFFF, 0x0000
+    db 0x00, 0xFA, 0xCF, 0x00  ; 0xFA = 11111010b (DPL=3)
+    
+    ; Entry 4 (0x20): User data segment, Ring 3
+    ; DPL = 11b (Ring 3)
+    dw 0xFFFF, 0x0000
+    db 0x00, 0xF2, 0xCF, 0x00  ; 0xF2 = 11110010b (DPL=3)
+gdt_end:
+
+; Note: Selectors for Ring 3 must OR with 3:
+; User code: 0x18 | 3 = 0x1B
+; User data: 0x20 | 3 = 0x23
+```
+
 ## Assembly Code Examples
 
 ### Complete GDT Setup and Loading
