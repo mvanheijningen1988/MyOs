@@ -25,8 +25,6 @@ Physical Address Range      Size        Description
 Physical Address    Size    Description
 ================    ====    ===========
 0x7C00 - 0x7DFF     512B    Boot sector
-0x7E00 - 0x81FF     1KB     EXT Superblock
-0x8200 - 0x91FF     4KB     Block Group Descriptor Table
 ```
 
 ### Boot Sector Memory Layout
@@ -34,7 +32,7 @@ Physical Address    Size    Description
 Physical Address    Size    Description
 ================    ====    ===========
 0x7C00 - 0x7DFC     509B    Bootloader code  
-0x7DFD              1B      Boot drive number storage
+0x7DFD - 0x7DFD     1B      Boot drive number storage
 0x7DFE - 0x7DFF     2B      Boot signature (0xAA55)
 ```
 
