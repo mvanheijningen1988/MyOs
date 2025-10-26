@@ -12,11 +12,15 @@
 # Assembler configuration
 ASM = nasm
 ASM_FLAGS = -f bin
+CC = x86_64-elf-gcc
+CFLAGS = -m32 -ffreestanding -fno-pie -nostdlib -nodefaultlibs -fno-builtin -mno-sse -mno-sse2 -mpreferred-stack-boundary=2 -c
+LD = x86_64-elf-ld
+LDFLAGS = -m elf_i386 -T linker.ld --oformat binary
 OUT_DIR = out
 QEMU = qemu-system-i386
 
 # Default target
-all: directory boot.bin hd.img burn
+all: directory boot.bin loader.bin hd.img burn
 
 directory:
 	mkdir -p $(OUT_DIR)
@@ -25,12 +29,20 @@ directory:
 boot.bin: boot/boot.asm
 	$(ASM) $(ASM_FLAGS) $< -o $(OUT_DIR)/$@
 
+# Compile C loader
+loader.o: stage2/loader.c
+	$(CC) $(CFLAGS) $< -o $(OUT_DIR)/$@
+
+# Link loader to flat binary at 0x500
+loader.bin: loader.o
+	$(LD) $(LDFLAGS) $(OUT_DIR)/loader.o -o $(OUT_DIR)/$@
+
 hd.img:
 	dd if=/dev/zero of=$(OUT_DIR)/$@ bs=512 count=2880
-	mkfs.ext2 -v $(OUT_DIR)/$@
 
-burn: boot.bin hd.img
-	dd if=$(OUT_DIR)/boot.bin of=$(OUT_DIR)/hd.img conv=notrunc
+burn: boot.bin loader.bin hd.img
+	dd if=$(OUT_DIR)/boot.bin of=$(OUT_DIR)/hd.img conv=notrunc bs=512 count=1 seek=0
+	dd if=$(OUT_DIR)/loader.bin of=$(OUT_DIR)/hd.img conv=notrunc bs=512 count=2 seek=1
 
 run: 
 	$(QEMU) -drive format=raw,file=$(OUT_DIR)/hd.img,if=ide --monitor stdio
@@ -44,4 +56,4 @@ clean:
 	rm -f memdump.bin
 
 # Phony targets
-.PHONY: all clean
+.PHONY: all clean directory

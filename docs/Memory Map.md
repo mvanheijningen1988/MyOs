@@ -31,7 +31,8 @@ Physical Address    Size    Description
 ```
 Physical Address    Size    Description
 ================    ====    ===========
-0x7C00 - 0x7DFC     509B    Bootloader code  
+0x7C00 - 0x7DFC     509B    Bootloader code
+0x7DCC - 0x7DFC     30B     GDT  
 0x7DFD - 0x7DFD     1B      Boot drive number storage
 0x7DFE - 0x7DFF     2B      Boot signature (0xAA55)
 ```

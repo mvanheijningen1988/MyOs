@@ -19,4 +19,11 @@ protected_mode_init:
     mov ebp, 0x90000            ; Set up stack base pointer
     mov esp, ebp                ; Set up stack pointer
 
-    call main                   ; Call the main kernel function
+    ; Clear screen
+    mov edi, 0xB8000            ; VGA text mode buffer
+    mov ecx, 0x7D0              ; 80x25/2 = 1000 words to clear
+    mov ax, 0x0F20              ; Space character with attribute
+    rep stosw                   ; Clear screen
+
+    ; Call the next stage
+    call 0x500
